@@ -88,21 +88,28 @@ do
   do
     PLATLANG=`echo $PL | awk -F";" '{print $1}'`
     PLDESC=`echo $PL | awk -F";" '{print $2}'`
+    protpatches=0
     echo
     echo "Getting list of files for patch $pp_patch for \"${PLDESC}\""
 
     wget --secure-protocol=TLSv1 --no-check-certificate --load-cookies=$COOK "https://updates.oracle.com/Orion/SimpleSearch/process_form?search_type=patch&patch_number=${pp_patch}&plat_lang=${PLATLANG}" -O $TMP1 -q
     grep "Download/process_form" $TMP1 | egrep "${p_regexp}" | sed 's/ //g' | sed "s/.*href=\"//g" | sed "s/\".*//g" > $TMP2
-    grep "javascript:showDetails(\"/Orion/PatchDetails/process_form" $TMP1 | sed 's/ //g' | sed "s/.*href='javascript:showDetails(\"//g" | sed "s/\".*//g" | while read LINE
+    if [ `grep "javascript:showDetails(\"/Orion/PatchDetails/process_form" $TMP1 | grep -e "title=\"Download Password Protected Patch"  | wc -l` -gt 0 ]
+    then
+      echo "!!! This patch contains password protected files (not listed). Use My Oracle Support to download them!"
+      protpatches=1
+    fi
+    grep "javascript:showDetails(\"/Orion/PatchDetails/process_form" $TMP1 | grep -v -e "title=\"Download Password Protected Patch" -e "Download/process_form" -e  "class=\"OraTableCellNumber" -e "title=\"Translation Required" | sed 's/ //g' | sed "s/.*href='javascript:showDetails(\"//g" | sed "s/\".*//g" | while read LINE
       do
         wget --secure-protocol=TLSv1 --no-check-certificate --load-cookies=$COOK "https://updates.oracle.com/${LINE}" -O $TMP1 -q
         grep "Download/process_form" $TMP1 | egrep "${p_regexp}" | sed 's/ //g' | sed "s/.*href=\"//g" | sed "s/\".*//g" >> $TMP2
       done
 
-    rm $TMP1 >/dev/null 2>&1
+rm $TMP1 >/dev/null 2>&1
+touch $TMP3
 
     if [ `cat $TMP2 | wc -l` -gt 0 ] ; then
-      if [ `cat $TMP2 | wc -l` -eq 1 ] ; then
+      if [ `cat $TMP2 | wc -l` -eq 1 ] && [ $protpatches -eq 0 ] ; then
         DownList="1"
       else
         set +
@@ -116,6 +123,8 @@ do
         set -
       fi
       cat $TMP2 | sed -n "${DownList}p" >> $TMP3
+      echo "Files to download:"
+      cat $TMP2  | sed -n "${DownList}p" | awk -F"=" '{print $NF}' | sed "s/[?&]//g" | sed "s/^/  /g"
     else
       echo "no patch available"
     fi
@@ -123,7 +132,7 @@ do
   done
 done
 
-if [ ! -z ${p_patch} ] ; then
+if ([ ! -z ${p_patch} ] && [ $(cat $TMP3| wc -l) -gt 0 ]) ; then
   echo
   echo "Downloading the patches:"
   for URL in $(cat $TMP3)
@@ -133,6 +142,7 @@ if [ ! -z ${p_patch} ] ; then
     curl -b $COOK -c $COOK --tlsv1 --insecure --output $fname -L "$URL"
     echo "$fname completed with status: $?"
   done
-  rm $TMP3 >/dev/null 2>&1
 fi
+rm $TMP3 >/dev/null 2>&1
 rm $COOK >/dev/null 2>&1
+
